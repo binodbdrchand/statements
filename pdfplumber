@@ -1,59 +1,143 @@
+[Date, Invoice, Amount, Description]
+
+
 import pdfplumber
 import re
+from pprint import pprint
 
-# Adjust this regex to match your date format
+# --- Regex Patterns ---
 date_regex = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
-def extract_rows_from_pdf(pdf_path):
-    rows = []
+# --- Function 1 ---
+def load_pdf_text_lines(pdf_path):
+    """Extract text lines from all pages."""
+    lines = []
     with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[0]
-        lines = page.extract_text().split('\n')
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                lines += text.split('\n')
+    return [line.strip() for line in lines if line.strip()]
 
-    current_row_lines = []
+# --- Function 2 ---
+def is_table_header(line):
+    """Detect common table headers to skip repeated headers."""
+    header_keywords = ["date", "invoice", "amount", "description"]
+    return all(keyword in line.lower() for keyword in header_keywords)
+
+# --- Function 3 ---
+def group_lines_into_sections(lines):
+    """
+    Split lines into:
+    - metadata (before table),
+    - table_row_groups (grouped by date-started row),
+    - summary (after table).
+    """
+    metadata = []
+    summary = []
+    table_rows = []
+
+    current_group = []
+    table_started = False
+    table_ended = False
+
     for line in lines:
-        line = line.strip()
+        if is_table_header(line):
+            continue  # skip repeated headers
+
         if date_regex.match(line):
-            if current_row_lines:
-                rows.append(current_row_lines)
-                current_row_lines = []
-            current_row_lines.append(line)
-        else:
-            current_row_lines.append(line)
+            table_started = True
+            if current_group:
+                table_rows.append(current_group)
+                current_group = []
+            current_group = [line]
 
-    if current_row_lines:
-        rows.append(current_row_lines)
+        elif table_started and not table_ended:
+            # Likely continuation of multi-line row
+            if re.search(r"\d+$", line) or len(current_group) > 0:
+                current_group.append(line)
+            else:
+                if current_group:
+                    table_rows.append(current_group)
+                    current_group = []
+                table_ended = True
+                summary.append(line)
 
-    parsed_rows = []
-    for group in rows:
-        date = group[0]
-        rest = " ".join(group[1:]).strip()
-        # Split rest into Invoice, Amount, Description (from right to left)
-        match = re.match(r"(.+?)\s+(\d+)\s+(.*)", rest)
-        if match:
-            invoice = match.group(1).strip()
-            amount = match.group(2).strip()
-            desc = match.group(3).strip()
-        else:
-            invoice = amount = desc = ""
+        elif table_ended:
+            summary.append(line)
 
-        parsed_rows.append([date, invoice, amount, desc])
+        elif not table_started:
+            metadata.append(line)
 
-    return parsed_rows
+    if current_group:
+        table_rows.append(current_group)
 
-# Example usage
+    return metadata, table_rows, summary
+
+# --- Function 4 ---
+def parse_row_group(group):
+    """Convert a group of lines into [date, invoice, amount, description]."""
+    date = group[0]
+    rest = " ".join(group[1:]).strip()
+    match = re.match(r"(.+?)\s+(\d+)\s+(.*)", rest)
+    if match:
+        invoice = match.group(1).strip()
+        amount = match.group(2).strip()
+        desc = match.group(3).strip()
+    else:
+        invoice = amount = desc = ""
+    return [date, invoice, amount, desc]
+
+# --- Function 5 ---
+def parse_table_rows(table_row_groups):
+    """Convert all grouped rows into structured table rows."""
+    return [parse_row_group(group) for group in table_row_groups]
+
+# --- Function 6 ---
+def extract_pdf_data(pdf_path):
+    """Main function: returns metadata, table rows, and summary."""
+    lines = load_pdf_text_lines(pdf_path)
+    metadata, row_groups, summary = group_lines_into_sections(lines)
+    table_rows = parse_table_rows(row_groups)
+    return {
+        "metadata": metadata,
+        "table_rows": table_rows,
+        "summary": summary
+    }
+
+
+-- USAGE
+
 pdf_path = "temp.pdf"
-parsed = extract_rows_from_pdf(pdf_path)
+data = extract_pdf_data(pdf_path)
 
-# Show results
-from pprint import pprint
-pprint(parsed)
+print("=== METADATA ===")
+print("\n".join(data["metadata"]))
 
-##### SAMPLE OUTPUT #####
+print("\n=== TABLE ROWS ===")
+pprint(data["table_rows"])
+
+print("\n=== SUMMARY ===")
+print("\n".join(data["summary"]))
+
+
+-- SAMPLE OUTPUT
+
 [
     ['1/1/2025', 'INV0001 -same', '100', 'This needs to be paid'],
     ['2/2/2025', 'INV0002', '200', 'This was taken as a personal favor'],
     ['3/3/2025', 'INV0003 - next inv', '300', 'NONE'],
-    ['4/4/2025', 'INV0004', '400', 'NONE'],
-    ['5/5/2025', 'INV0005', '500', 'Next page invoice']
+    ['4/4/2025', 'INV0004', '400', 'NONE']
 ]
+
+
+-- SCANNED
+
+import pdfplumber
+
+with pdfplumber.open("temp.pdf") as pdf:
+    page = pdf.pages[0]
+    text = page.extract_text()
+    print("SCANNED" if not text else "TEXT-BASED")
+
+
