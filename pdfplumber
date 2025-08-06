@@ -1,0 +1,59 @@
+import pdfplumber
+import re
+
+# Adjust this regex to match your date format
+date_regex = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
+
+def extract_rows_from_pdf(pdf_path):
+    rows = []
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        lines = page.extract_text().split('\n')
+
+    current_row_lines = []
+    for line in lines:
+        line = line.strip()
+        if date_regex.match(line):
+            if current_row_lines:
+                rows.append(current_row_lines)
+                current_row_lines = []
+            current_row_lines.append(line)
+        else:
+            current_row_lines.append(line)
+
+    if current_row_lines:
+        rows.append(current_row_lines)
+
+    parsed_rows = []
+    for group in rows:
+        date = group[0]
+        rest = " ".join(group[1:]).strip()
+        # Split rest into Invoice, Amount, Description (from right to left)
+        match = re.match(r"(.+?)\s+(\d+)\s+(.*)", rest)
+        if match:
+            invoice = match.group(1).strip()
+            amount = match.group(2).strip()
+            desc = match.group(3).strip()
+        else:
+            invoice = amount = desc = ""
+
+        parsed_rows.append([date, invoice, amount, desc])
+
+    return parsed_rows
+
+# Example usage
+pdf_path = "temp.pdf"
+parsed = extract_rows_from_pdf(pdf_path)
+
+# Show results
+from pprint import pprint
+pprint(parsed)
+
+##### SAMPLE OUTPUT #####
+[
+    ['1/1/2025', 'INV0001 -same', '100', 'This needs to be paid'],
+    ['2/2/2025', 'INV0002', '200', 'This was taken as a personal favor'],
+    ['3/3/2025', 'INV0003 - next inv', '300', 'NONE'],
+    ['4/4/2025', 'INV0004', '400', 'NONE'],
+    ['5/5/2025', 'INV0005', '500', 'Next page invoice']
+]
