@@ -140,4 +140,17 @@ with pdfplumber.open("temp.pdf") as pdf:
     text = page.extract_text()
     print("SCANNED" if not text else "TEXT-BASED")
 
+from PIL import Image
+import pytesseract
+import pdfplumber
+
+def ocr_pdf_lines(pdf_path, dpi=300):
+    all_lines = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            img = page.to_image(resolution=dpi).original
+            text = pytesseract.image_to_string(img)
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            all_lines.extend(lines)
+    return all_lines
 
